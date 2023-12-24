@@ -6,7 +6,6 @@ import sqlite3
 import time
 from sqlite3 import OperationalError
 from typing import Any, Dict, List, Tuple
-from typing_extensions import Literal
 import cv2
 import send2trash
 import wx  # type: ignore
@@ -360,7 +359,7 @@ class dbManager:
             p.print_exception()
             return False
 
-    def insert_original_fileloc_fileId_count(self, media_file):
+    def insert_original_fileloc_fileId_count(self, media_file) -> bool:
         try:
             query = """INSERT INTO media (fileId, original_filepath, original_filename, view_count)
                        VALUES (?, ?, ?, ?)"""
@@ -503,7 +502,7 @@ class FileProcessor:
 
 
 def get_name_from_id(db_ops, table, original_filepath):
-    l.info(f"Getting name from original_filepath: {original_filepath} in table: {table} and db_ops: {db_ops}")
+    l.info(msg=f"Getting name from original_filepath: {original_filepath} in table: {table} and db_ops: {db_ops}")
     try:
         query = f"SELECT name FROM {table} WHERE original_filepath = ?"
         result = db_ops.execute_query(query, (str(original_filepath),))
@@ -532,27 +531,24 @@ def main() -> None:
     db_operations = dbManager(db_conn=db_connection)
     db_connection.initialize_database()
     media_ranker = fRanker(db_ops=db_operations)
-
     get_db_data = db_operations.execute_query(query="SELECT * FROM media")
 
-    # Create a table
     table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("ID", justify="right")
-    # table.add_column("FileID", justify="right")
-    table.add_column("Original Filepath")
-    table.add_column("Original Filename")
-    table.add_column("Updated Filename")
-    table.add_column("Updated Filepath")
-    table.add_column("Category")
-    table.add_column("Filetag")
-    table.add_column("Type")
-    table.add_column("Ranking", justify="right")
-    table.add_column("Resolution")
-    table.add_column("Size", justify="right")
-    table.add_column("Deleted", justify="center")
-    table.add_column("Moved", justify="center")
-    table.add_column("Skipped", justify="center")
-    table.add_column("View Count", justify="right")
+    table.add_column(header="ID", justify="right")
+    table.add_column(header="Original Filepath")
+    table.add_column(header="Original Filename")
+    table.add_column(header="Updated Filename")
+    table.add_column(header="Updated Filepath")
+    table.add_column(header="Category")
+    table.add_column(header="Filetag")
+    table.add_column(header="Type")
+    table.add_column(header="Ranking", justify="right")
+    table.add_column(header="Resolution")
+    table.add_column(header="Size", justify="right")
+    table.add_column(header="Deleted", justify="center")
+    table.add_column(header="Moved", justify="center")
+    table.add_column(header="Skipped", justify="center")
+    table.add_column(header="View Count", justify="right")
 
     for row in get_db_data:
         file_size = row[11]  # Assuming the file size is in the 11th column
@@ -566,7 +562,7 @@ def main() -> None:
             size_display = "N/A"  # Set a default display for None values
 
         # Add the row to the table, replacing the original size with the formatted size_display
-        table.add_row(*[str(item) for item in row[:-1]], size_display)
+        table.add_row(*[str(object=item) for item in row[:-1]], size_display)
     p.print(table)
     try:
         media_player = fPlayer()

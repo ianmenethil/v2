@@ -2,7 +2,7 @@ from tkinter import Tk, filedialog
 import inquirer
 import sqlite3
 import yaml
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 from rich.console import Console
 from rich.table import Table
 
@@ -19,7 +19,7 @@ class DBConnection:
         self.conn.close()
 
 
-def add_column(db_file: str, table_name: str, column_name: str, column_type: str):
+def add_column(db_file: str, table_name: str, column_name: str, column_type: str) -> None:
     with DBConnection(db_file) as conn:
         cursor = conn.cursor()
         try:
@@ -32,7 +32,7 @@ def add_column(db_file: str, table_name: str, column_name: str, column_type: str
                 raise e
 
 
-def insert_record(db_file: str, table_name: str, data: Dict[str, Any]):
+def insert_record(db_file: str, table_name: str, data: Dict[str, Any]) -> None:
     with DBConnection(db_file) as conn:
         columns = ', '.join(data.keys())
         placeholders = ', '.join('?' * len(data))
@@ -49,7 +49,7 @@ def fetch_all_records(db_file: str, table_name: str) -> list:
         return cursor.fetchall()
 
 
-def update_record(db_file: str, table_name: str, data: Dict[str, Any], condition: str):
+def update_record(db_file: str, table_name: str, data: Dict[str, Any], condition: str) -> None:
     with DBConnection(db_file) as conn:
         set_clause = ', '.join([f"{k} = ?" for k in data])
         values = tuple(data.values())
@@ -58,37 +58,21 @@ def update_record(db_file: str, table_name: str, data: Dict[str, Any], condition
         conn.commit()
 
 
-def delete_record(db_file: str, table_name: str, condition: str):
+def delete_record(db_file: str, table_name: str, condition: str) -> None:
     with DBConnection(db_file) as conn:
         cursor = conn.cursor()
         cursor.execute(f"DELETE FROM {table_name} WHERE {condition}")
         conn.commit()
 
 
-def bulk_insert_from_yaml(db_file: str, table_name: str, yaml_file: str):
+def bulk_insert_from_yaml(db_file: str, table_name: str, yaml_file: str) -> None:
     with open(yaml_file, 'r') as file:
         records = yaml.safe_load(file)
         for record in records:
             insert_record(db_file, table_name, record)
 
 
-# def fetch_and_display_records(db_file, table_name):
-#     with DBConnection(db_file) as conn:
-#         cursor = conn.cursor()
-#         cursor.execute(f"SELECT * FROM {table_name}")
-#         records = cursor.fetchall()
-#         table = Table(show_header=True, header_style="bold magenta")
-#         # Assuming the first column is always the ID
-#         columns = [description[0] for description in cursor.description]
-#         for col in columns:
-#             table.add_column(col)
-#         for record in records:
-#             table.add_row(*[str(item) for item in record])
-#         print(table)
-#         return records
-
-
-def fetch_and_display_records(db_file, table_name):
+def fetch_and_display_records(db_file, table_name) -> list[Any]:
     with DBConnection(db_file) as conn:
         cursor = conn.cursor()
         cursor.execute(f"SELECT * FROM {table_name}")
@@ -100,7 +84,7 @@ def fetch_and_display_records(db_file, table_name):
         return records
 
 
-def print_db_records(db_file, table_name):
+def print_db_records(db_file, table_name) -> None:
     with DBConnection(db_file) as conn:
         cursor = conn.cursor()
         cursor.execute(f"SELECT * FROM {table_name}")
@@ -121,7 +105,7 @@ def print_db_records(db_file, table_name):
         console.print(table)
 
 
-def main_menu():
+def main_menu() -> Any | Literal['Exit']:
     questions = [
         inquirer.List('action',
                       message="What do you want to do?",
@@ -140,7 +124,7 @@ def main_menu():
     return answers['action'] if answers else 'Exit'
 
 
-def get_db_file_path():
+def get_db_file_path() -> Any | str | None:
     questions = [
         inquirer.List('method',
                       message="Choose how to select the database file:",
@@ -162,7 +146,7 @@ def get_db_file_path():
         return file_path if file_path else None
 
 
-def get_table_name(db_file: str):
+def get_table_name(db_file: str) -> Any | None:
     available_tables = get_available_tables(db_file)
     if not available_tables:
         print("No tables found in the database.")
@@ -202,7 +186,7 @@ def get_available_tables(db_file: str) -> List[str]:
         return [table[0] for table in tables]
 
 
-def list_table_columns(db_file, table_name):
+def list_table_columns(db_file, table_name) -> None:
     with DBConnection(db_file) as conn:
         cursor = conn.cursor()
         cursor.execute(f'PRAGMA table_info({table_name})')
@@ -220,7 +204,7 @@ def list_column_types(db_file: str, table_name: str) -> Dict[str, str]:
     return column_types
 
 
-def execute_safe_query(db_file, query, params=()):
+def execute_safe_query(db_file, query, params=()) -> bool:
     try:
         with DBConnection(db_file) as conn:
             cursor = conn.cursor()
@@ -232,14 +216,14 @@ def execute_safe_query(db_file, query, params=()):
         return False
 
 
-def handle_error(e: Exception):
+def handle_error(e: Exception) -> None:
     if isinstance(e, sqlite3.IntegrityError):
         print("Error: Duplicate data or integrity constraint violation.")
     else:
         print(f"An error occurred: {e}")
 
 
-def main():
+def main() -> None:
     while True:
         action = main_menu()
         if action == 'Exit':

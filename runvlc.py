@@ -3,8 +3,9 @@ from urllib.parse import unquote
 from typing import Any
 import wx  # pylint: disable=E0401 # type: ignore
 import vlc
-from setup_logger import l, sR, sY, sW, sWB
-from setup_logger import p as cp
+# from setup_logger import l, sR, sY, sW, sWB
+# from setup_logger import p as cp
+from setup_logger import l
 from pathlib import Path
 import subprocess
 
@@ -127,7 +128,7 @@ class VLCMediaPlayerGUI(wx.Frame):
 
     def log_media_info(self) -> None:
         width, height = self.player.video_get_size()
-        quality: str = self.calculate_video_quality()
+        quality: str = self.calculate_video_quality()  # noqa: F841
         # cp.print("*" * 20 + f" [{sY}]Height:[/][{sW}] {height} [/] | [{sY}]Width:[/][{sW}] {width} [/] | [{sY}]Quality:[/][{sWB}] {quality} [/] " + "*" * 20, style="blue underline", end="\n")
 
     def calculate_video_quality(self) -> str:
