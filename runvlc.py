@@ -1,10 +1,9 @@
 # runvlc.py
+import contextlib
 from urllib.parse import unquote
 from typing import Any
 import wx  # pylint: disable=E0401 # type: ignore
 import vlc
-# from setup_logger import l, sR, sY, sW, sWB
-# from setup_logger import p as cp
 from setup_logger import l
 from pathlib import Path
 import subprocess
@@ -31,6 +30,7 @@ class VLCMediaPlayerGUI(wx.Frame):
         self.setup_ui_components()
         self.bind_event_handlers()
         self.set_window_size()
+        # self.create_video_panel()
 
     def setup_ui_components(self) -> None:
         """ Set up the UI components for the VLC player. This method initializes and configures the various UI components such as panels, sliders, buttons, and timers."""
@@ -113,10 +113,23 @@ class VLCMediaPlayerGUI(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.on_exit)
         self.Bind(wx.EVT_SLIDER, self.on_seek, self.sldPosition)
 
-    def load_media(self, filepath) -> None:
-        """ The function `load_media` loads a media file, sets it as the player's media, and plays it while logging information about the media.
-        :param filepath: The `filepath` parameter is a string that represents the path to the media file that you want to load. It should be the absolute or relative path to the file, including the file name and extension """
+    # def load_media(self, filepath) -> None:
+    #     """ The function `load_media` loads a media file, sets it as the player's media, and plays it while logging information about the media.
+    #     :param filepath: The `filepath` parameter is a string that represents the path to the media file that you want to load. It should be the absolute or relative path to the file, including the file name and extension """
+    #     try:
+    #         self.media: Any = self.instance.media_new(filepath)  # type:ignore
+    #         self.player.set_media(self.media)
+    #         self.player.set_hwnd(self.pnlVideo.GetHandle())
+    #         # cp.print("#" * 10 + f" [{sY}]Playing: -->[/] [{sR}]{filepath}[/] " + "#" * 10, style="blue italic", end="\n")
+    #         self.player.play()  # Play to get video size
+    #         wx.CallLater(1000, self.log_media_info)  # Delay logging to ensure media is playing
+    #     except Exception as e:
+    #         l.error(msg=f"Error loading media: {e}")
+
+    def load_media(self, filepath):
+        """Load and play media."""
         try:
+            # self.create_video_panel()  # Ensure pnlVideo is available
             self.media: Any = self.instance.media_new(filepath)  # type:ignore
             self.player.set_media(self.media)
             self.player.set_hwnd(self.pnlVideo.GetHandle())
@@ -125,6 +138,13 @@ class VLCMediaPlayerGUI(wx.Frame):
             wx.CallLater(1000, self.log_media_info)  # Delay logging to ensure media is playing
         except Exception as e:
             l.error(msg=f"Error loading media: {e}")
+
+    def create_video_panel(self):
+        """Create or recreate the video panel."""
+        if self.pnlVideo:
+            self.pnlVideo.Destroy()
+        self.pnlVideo = wx.Panel(self)  # Recreate the panel
+        # Any additional setup for pnlVideo goes here
 
     def log_media_info(self) -> None:
         width, height = self.player.video_get_size()
@@ -208,11 +228,9 @@ class VLCMediaPlayerGUI(wx.Frame):
         Args: event: The mouse wheel event. """
         rotation = event.GetWheelRotation()
         if rotation > 0:
-            # scroll down
-            new_volume = max(0, self.sldVolume.GetValue() - 1)
+            new_volume: int = max(0, self.sldVolume.GetValue() - 1)
         else:
-            # scroll up
-            new_volume = min(100, self.sldVolume.GetValue() + 1)
+            new_volume: int = min(100, self.sldVolume.GetValue() + 1)
         self.sldVolume.SetValue(new_volume)
         self.player.audio_set_volume(new_volume)
 
@@ -221,13 +239,29 @@ class VLCMediaPlayerGUI(wx.Frame):
         Args: event: The mouse wheel event."""
         rotation = event.GetWheelRotation()
         if rotation > 0:
-            # scroll down
-            new_position = max(0, self.sldPosition.GetValue() - 1)
+            new_position: int = max(0, self.sldPosition.GetValue() - 1)
         else:
-            # scroll up
-            new_position = min(1000, self.sldPosition.GetValue() + 1)
+            new_position: int = min(100, self.sldPosition.GetValue() + 1)
         self.sldPosition.SetValue(new_position)
-        self.player.set_position(new_position / 1000.0)  # The position is a float between 0.0 and 1.0
+        self.player.set_position(new_position / 100)
+
+    def on_remove(self) -> None:
+        """Remove the currently loaded media from the player."""
+        with contextlib.suppress(Exception):
+            if self.player:
+                self.player.stop()
+                self.player.set_media(None)
+                # l.info("Media player has been stopped.")
+
+    # def on_remove(self):
+    #     """Remove the currently loaded media from the player."""
+    #     try:
+    #         if self.player:
+    #             self.player.stop()
+    #             self.player.set_media(None)
+    #             # l.info("Media player has been stopped.")
+    #     except Exception as e:
+    #         l.error(f"Error during media player removal: {e}")
 
 
 if __name__ == '__main__':

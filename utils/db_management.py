@@ -42,6 +42,27 @@ def insert_record(db_file: str, table_name: str, data: Dict[str, Any]) -> None:
         conn.commit()
 
 
+def execute_custom_query(db_file: str, query: str) -> None:
+    with DBConnection(db_file) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        records = cursor.fetchall()
+        column_names = [description[0] for description in cursor.description]
+
+        # Create a table
+        table = Table(show_header=True, header_style="bold magenta")
+        for column in column_names:
+            table.add_column(column)
+
+        for row in records:
+            # Format each cell as a string to ensure compatibility with the Rich table
+            formatted_row = [str(cell) if cell is not None else "N/A" for cell in row]
+            table.add_row(*formatted_row)
+
+        console = Console()
+        console.print(table)
+
+
 def fetch_all_records(db_file: str, table_name: str) -> list:
     with DBConnection(db_file) as conn:
         cursor = conn.cursor()
@@ -105,6 +126,24 @@ def print_db_records(db_file, table_name) -> None:
         console.print(table)
 
 
+# def main_menu() -> Any | Literal['Exit']:
+#     questions = [
+#         inquirer.List('action',
+#                       message="What do you want to do?",
+#                       choices=[
+#                           'Add Column',
+#                           'Insert Record',
+#                           'Update Record',
+#                           'Delete Record',
+#                           'Bulk Insert From YAML',
+#                           'Print Records',  # Add this line
+#                           'Exit'
+#                       ],
+#                       ),
+#     ]
+#     answers = inquirer.prompt(questions)
+#     return answers['action'] if answers else 'Exit'
+
 def main_menu() -> Any | Literal['Exit']:
     questions = [
         inquirer.List('action',
@@ -115,7 +154,8 @@ def main_menu() -> Any | Literal['Exit']:
                           'Update Record',
                           'Delete Record',
                           'Bulk Insert From YAML',
-                          'Print Records',  # Add this line
+                          'Print Records',
+                          'Execute Custom Query',  # Add this line
                           'Exit'
                       ],
                       ),
@@ -224,15 +264,17 @@ def handle_error(e: Exception) -> None:
 
 
 def main() -> None:
+    db_file = "config/db.db"  # Hardcoded database file path
+
     while True:
         action = main_menu()
         if action == 'Exit':
             break
 
-        db_file = get_db_file_path()
-        if not db_file:
-            print("No database file selected. Exiting.")
-            break
+        # db_file = get_db_file_path()
+        # if not db_file:
+        #     print("No database file selected. Exiting.")
+        #     break
 
         table_name = get_table_name(db_file)
         if not table_name:
@@ -299,6 +341,13 @@ def main() -> None:
                     update_record(db_file, table_name, data_dict, f"id = {record_id}")
                 except SyntaxError:
                     print("Invalid data format. Please use the correct dictionary format.")
+
+        elif action == 'Execute Custom Query':
+            query = inquirer.prompt([
+                inquirer.Text('query', message='Enter the SQL query:')
+            ])['query']
+            if query:
+                execute_custom_query(db_file, query)
 
         elif action == 'Delete Record':
             condition = inquirer.prompt([

@@ -2,3 +2,5 @@
 config/
 venv/
 __pycache__/
+main.txt
+runvlc.txt
