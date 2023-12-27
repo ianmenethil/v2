@@ -7,7 +7,7 @@ import random
 import sqlite3
 import time
 from sqlite3 import OperationalError
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Literal, Optional
 import cv2
 import send2trash
 import wx  # _Type: ignore
@@ -15,93 +15,26 @@ from runvlc import VLCMediaPlayerGUI
 from setup_logger import l, sY, p, sW, sR, sB
 from rich.table import Table
 import inquirer
+import json
+import glob
 
-# config
-INDIR = Path(r"D:\.projects\new")
-OUTDIR = Path(r"D:\.projects\Sorted")
-# INDIR = Path(r"E:\Test")
-# OUTDIR = Path(r"E:\Test\Q")
-DBFILE = Path("config/db.db")
-OPTIONSDBFILE = Path("config/options.db")
-VALID_EXTENSIONS: list[str] = [".mp4", ".avi", ".mkv"]
+# Load configuration from JSON file
+with open(file='config/config.json', mode='r') as config_file:
+    CONFIG = json.load(fp=config_file)
 
-DB_SCHEMA = """
-CREATE TABLE IF NOT EXISTS media (
-    id INTEGER PRIMARY KEY,
-    fileId INTEGER DEFAULT 0,
-    Count INTEGER DEFAULT 0,
-    destFileName TEXT,
-    destFilePath TEXT,
-    _Rating INTEGER,
-    _Category TEXT,
-    _Type TEXT,
-    _Tag TEXT,
-    FileRes TEXT,
-    _Deleted BOOLEAN DEFAULT FALSE,
-    _Skipped BOOLEAN DEFAULT FALSE,
-    _Processed BOOLEAN DEFAULT FALSE,
-    FileSize INTEGER,
-    sourceFilePath TEXT,
-    soureceFileName TEXT
-)
-"""
+INDIR = Path(CONFIG["input_folder"])
+OUTDIR = Path(CONFIG["output_folder"])
+VALID_EXTENSIONS = CONFIG["valid_extensions"]
 
-OPTIONSDB_SCHEMA = """
-CREATE TABLE IF NOT EXISTS options (
-    id INTEGER PRIMARY KEY,
-    _Category TEXT UNIQUE,
-    _Tag TEXT UNIQUE,
-    _Type TEXT UNIQUE
-)
-"""
+MEDIA_dbFile = CONFIG["media_db_file"]
+MEDIA_dbSchema = CONFIG["db_schema"]["media"]
+MEDIA_dbAlterStatements = CONFIG["alter_statements"]
 
-CONFIG: Dict[str, Any] = {
-    "input_folder": INDIR,
-    "output_folder": OUTDIR,
-    "database_file": DBFILE,
-    "schema": {"media": DB_SCHEMA, },
-    "valid_extensions": VALID_EXTENSIONS, }
-
-ALTER_STATEMENTS: list[str] = [
-    "ALTER TABLE media ADD COLUMN fileId INTEGER DEFAULT 0",
-    "ALTER TABLE media ADD COLUMN Count INTEGER DEFAULT 0",
-    "ALTER TABLE media ADD COLUMN destFileName TEXT",
-    "ALTER TABLE media ADD COLUMN destFilePath TEXT",
-    "ALTER TABLE media ADD COLUMN _Rating INTEGER",
-    "ALTER TABLE media ADD COLUMN _Category TEXT",
-    "ALTER TABLE media ADD COLUMN _Type TEXT",
-    "ALTER TABLE media ADD COLUMN _Tag TEXT",
-    "ALTER TABLE media ADD COLUMN FileRes TEXT",
-    "ALTER TABLE media ADD COLUMN _Deleted BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE media ADD COLUMN _Skipped BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE media ADD COLUMN _Processed BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE media ADD COLUMN FileSize INTEGER",
-    "ALTER TABLE media ADD COLUMN sourceFilePath TEXT",
-    "ALTER TABLE media ADD COLUMN soureceFileName TEXT",
-]
-
-ALTER_OPTION_STATEMENTS: list[str] = [
-    "ALTER TABLE media ADD COLUMN _Category TEXT UNIQUE",
-    "ALTER TABLE media ADD COLUMN _Type TEXT UNIQUE",
-    "ALTER TABLE media ADD COLUMN _Tag TEXT UNIQUE",
-]
+OPTIONS_dbFile = CONFIG["options_db_file"]
+OPTIONS_dbSchema = CONFIG["db_schema"]["options"]
+OPTIONS_dbAlter_Statements = CONFIG["alter_option_statements"]
 
 
-def checkDB(db_file) -> None:
-    db_path = Path(db_file)
-    if not db_path.exists():
-        l.error(msg=f"Database file {db_file} not found. Creating a new database.")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        db_path.touch()
-        sys.exit(0)
-
-
-checkDB(db_file=CONFIG["database_file"])
-checkDB(db_file=OPTIONSDBFILE)
-
-
-def ZZZ() -> None:  # sleepy sleepy time
-    time.sleep(random.randint(a=1, b=2))
 
 
 class ErrorLogger:
@@ -243,115 +176,165 @@ class MediaDetails:
 
 
 class mediaRanker:
-    def __init__(self, db_ops) -> None:
-        """ Initializes a mediaRanker object. Args: db_ops: The database operations object. """
-        self.db_ops: Any = db_ops
+    def __init__(self, dbMan) -> None:
+        """ Initializes a mediaRanker object. Args: dbMan_ops: The database operations object. """
+        self.dbMan_ops: Any = dbMan
         self.error_logger = ErrorLogger()
 
-    def getUserChoices(self, option_type: str, allow_new: bool = True) -> list[str]:
-        options = self.getOptions(option_type)
-        while True:  # Loop until a valid input is provided
-            questions = [
-                inquirer.List(option_type,
-                              message=f"Select {option_type}",
-                              choices=options + ["Add New " + option_type])
-            ]
-            answer = inquirer.prompt(questions)
-            selected = answer[option_type]
 
-            if selected.startswith("Add New"):
-                new_option = input(f"Enter new {option_type}: ").strip()
-                if self.is_valid_option(new_option):  # Call the method using self
-                    if new_option not in options:
-                        table = "options" if option_type in ['_Category', '_Tag', '_Type'] else "media"
-                        self.updateTableWithNewOption(table_name=table, column=option_type, option=new_option)
-                        return [new_option]
+    def getUserChoices(self, option_type: str, allow_new: bool = True, mediaFile: Optional[str] = None) -> List[str]:
+        options: list[str] = self.getOptions(option_type=option_type)
+        previous_selection: list[str] = []  # Store the previous selection
+        media_file: str = mediaFile if mediaFile is not None else "default_or_fetched_value"
+        while True:
+            choices: list[str] = options + ["1)New", "2)Back", "3)Skip", "4)Delete", "5)Exit"]
+            questions = [inquirer.List(name=option_type, message=f"Select {option_type}", choices=choices)]
+            answer: dict[Any, Any] | None = inquirer.prompt(questions=questions)
+            if answer is not None:
+                selected = answer[option_type]
+                if selected == "5)Exit":
+                    l.info(msg="User chose to exit... Goodbye")
+                    sys.exit()
+                if selected == "4)Delete":
+                    if option_to_delete := self.prompt_for_option_to_delete(options=options):
+                        self.deleteOptionHandling(media_file=media_file)
+                        options.remove(option_to_delete)
+                elif selected == "3)Skip":
+                    self.skipOptionHandling(media_file=media_file)
+                elif selected == "2)Back":
+                    if previous_selection:
+                        return previous_selection  # Go back to the previous level
+                    p.print("[sW]You are at the [sB]top[/] level. Cannot go back further.[/]",end="\n",)
+                    l.info(msg="")
+                elif selected == "1)New" and allow_new:
+                    new_option: str = input(f"Enter new {option_type}: ").strip()
+                    if new_option and self.validateUserInput(option=new_option):
+                        if new_option not in options:
+                            # table: Literal['options', 'media'] = "options" if option_type in ['_Category', '_Tag', '_Type'] else "media"
+                            table: Literal['options', 'media']  # ! NOTE HERE CHANGE
+                            if option_type in {'_Category', '_Tag', '_Type'}:
+                                table = "options"
+                            elif option_type == '_Rating':
+                                table = "media"
+                            else:
+                                l.error(msg=f"Unknown option type: {option_type}")
+                                continue
+                            self.updateTableWithNewOption(table_name=table, column=option_type, option=new_option)
+                            return [new_option]
+                        else:
+                            p.print(f"[sW]{new_option} already exists as a {option_type}[/]", end="\n")
+                            l.info(msg="Please enter a different one.")
                     else:
-                        print(f"The {option_type} already exists. Please enter a different one.")
+                        l.info(msg=f"Invalid {option_type}. Please try again.")
                 else:
-                    print(f"Invalid {option_type}. It may be empty, contain invalid characters, or start with a space.")
+                    # Update previous selection and break the loop
+                    previous_selection = [selected]
+                    break
             else:
-                return [selected]
+                l.error(msg="Invalid answer. Please try again.")
+                continue
+        return previous_selection
+
+    def prompt_for_option_to_delete(self, options):
+        questions = [inquirer.List('delete_option', message="Select option to delete", choices=options)]
+        answer = inquirer.prompt(questions)
+        return answer['delete_option'] if answer else None
+
+    def deleteOptionHandling(self, media_file):
+        # Assuming media_file is an object with the necessary attributes, e.g., sourceFilePath
+        if self.dbMan_ops.markFileAsDeleted(media_file):
+            l.info(msg=f"File marked as deleted: {media_file.sourceFilePath}")
+        else:
+            l.error(msg=f"Failed to mark file as deleted: {media_file.sourceFilePath}")
+
+
+
+    def skipOptionHandling(self, media_file) -> None:
+        # Assuming media_file is an object with the necessary attributes, e.g., sourceFilePath
+        self.dbMan_ops.increaseViewCount(media_file)
+        l.info(msg=f"View count increased for file: {media_file.sourceFilePath}")
 
     def getOptions(self, option_type: str) -> list[str]:
-        if option_type in ['_Category', '_Tag', '_Type']:
-            query = f"SELECT DISTINCT {option_type} FROM options"
-            results = self.db_ops.executeGETQuery(query=query)
+        if option_type in {'_Category', '_Tag', '_Type'}:
+            query: str = f"SELECT DISTINCT {option_type} FROM options"
+            results = self.dbMan_ops.executeGETQuery(query=query)
             return [row[0] for row in results if row[0]]  # Exclude None or empty values
         elif option_type == '_Rating':
-            return list(range(1, 6))  # Return a list of ratings from 1 to 10
+            return [str(object=i) for i in range(1, 6)]  # Convert integers to strings
+            # return list(range(1, 6))  # Return a list of ratings from 1 to 10
         else:
+            l.error(msg=f"Unknown option type: {option_type} --> Returning empty list")
+            self.error_logger.handle_error(error=Exception(f"Unknown option type: {option_type}"))
             return []
 
-    def is_valid_option(self, option: str) -> bool:
-        """Validate the user input option."""
+    def validateUserInput(self, option: str) -> bool:
+        """Validate the user input option.
+        Args: option (str): The user input option to be validated.
+        Returns: bool: True if the option is valid, False otherwise.
+        """
         option = option.strip()  # Remove leading and trailing whitespace
         if not option:  # Check if the option is empty
             return False
         invalid_chars = set('/:\\')  # Define a set of invalid characters
-        if any(char in invalid_chars for char in option):  # Check for invalid characters
-            return False
-        return True  # The option is valid
+        return all(char not in invalid_chars for char in option)
 
     def updateTableWithNewOption(self, table_name: str, column: str, option: str) -> None:
         """Update or insert a new option into the specified table."""
         if not option.strip():
             l.info(msg=f"Cannot add an empty option for {column}")
             return
-        if not self.is_valid_option(option=option):
+        if not self.validateUserInput(option=option):
             l.info(msg=f"Cannot add an invalid option for {column}")
             return
+
         if table_name == "media":
-            query = f"UPDATE media SET {column} = ? WHERE {column} IS NULL OR {column} = ''"
-            params = (option,)
+            try:
+                media_query: str = f"UPDATE media SET {column} = ? WHERE {column} IS NULL OR {column} = ''"
+                media_params: tuple[str] = (option,)
+                self.dbMan_ops.executePOSTQuery(media_query, media_params)
+            except Exception as e:
+                l.error(msg=f"Failed to update {table_name} table with new option '{option}' for {column}: {e}")
+                self.error_logger.handle_error(error=e)
+
         elif table_name == "options":
-            query = f"INSERT INTO options ({column}) VALUES (?) ON CONFLICT ({column}) DO NOTHING"
-            params = (option,)
+            try:
+                options_query: str = f"INSERT INTO options ({column}) VALUES (?) ON CONFLICT ({column}) DO NOTHING"
+                options_params: tuple[str] = (option,)
+                self.dbMan_ops.executePOSTQuery(options_query, options_params)
+            except Exception as e:
+                l.error(msg=f"Failed to update {table_name} table with new option '{option}' for {column}: {e}")
+                self.error_logger.handle_error(error=e)
+
         else:
             l.error(msg=f"Unknown table name: {table_name}")
             return
-
-        try:
-            self.db_ops.executePOSTQuery(query, params)
-        except Exception as e:
-            l.error(msg=f"Failed to update {table_name} table with new option '{option}' for {column}: {e}")
-
-    # def updateTableWithNewOption(self, table_name: str, column: str, option: str) -> None:
-    #     """Update or insert a new option into the specified table."""
-    #     if not option.strip():
-    #         l.info(msg=f"Cannot add an empty option for {column}")
-    #         return
-
-    #     if table_name == "media":
-    #         query = f"UPDATE media SET {column} = ? WHERE {column} IS NULL OR {column} = ''"
-    #         params = (option,)
-    #     elif table_name == "options":
-    #         query = f"INSERT INTO options ({column}) VALUES (?) ON CONFLICT ({column}) DO NOTHING"
-    #         params = (option,)
-    #     else:
-    #         l.error(msg=f"Unknown table name: {table_name}")
-    #         return
-
-    #     try:
-    #         self.db_ops.executePOSTQuery(query, params)
-    #     except Exception as e:
-    #         l.error(msg=f"Failed to update {table_name} table with new option '{option}' for {column}: {e}")
 
     def getRating(self) -> int:
         while True:
             try:
                 userInput = int(input("Rate the file (1-5): "))
                 rating: int = min(5, max(1, userInput))  # Ensures rating is within 1 to 5
-                # l.info(f"User input rating: {rating}")
                 return rating
             except ValueError:
-                print("Please enter a valid number.")
+                p.print(f"[{sR}]Invalid rating option: Choose 1 - 5[/]", end="\n")
 
+class Utility:
+    @staticmethod
+    def checkDB(databaseFile) -> None:
+        db_path = Path(databaseFile)
+        if not db_path.exists():
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            db_path.touch()
+
+    @staticmethod
+    def ZZZ() -> None:
+        time.sleep(random.randint(a=1, b=3))
 
 class DatabaseConnection:
     def __init__(self, db_file: str) -> None:
         self.db_file: str = db_file
         self.error_logger = ErrorLogger()
+
 
     def getDBConnection(self) -> sqlite3.Connection | None:
         """Establish and return a database connection.
@@ -363,70 +346,54 @@ class DatabaseConnection:
             self.error_logger.handle_error(error=e)
             return None
 
-    def initializeDB(self) -> None:
+    def initializeDB(self) -> None:  # sourcery skip: extract-method
         """ Initializes the database by creating tables and adding columns to existing records.
         Raises: Exception: If there is an error initializing the database."""
         try:
-            conn: sqlite3.Connection | None = self.getDBConnection()
-            if conn is None:
+            dbConnection: sqlite3.Connection | None = self.getDBConnection()
+            if dbConnection is None:
                 l.error(msg="Failed to initialize database: No connection available")
                 return
-            with conn:
-                self.createTables(conn=conn)
-                self.createOptionsTable(conn=conn)
+            with dbConnection:
+                cursor: sqlite3.Cursor = dbConnection.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='media'")
+                media_result = cursor.fetchone()
+                if media_result is None:
+                    self.createMediaTable(dbConnection=dbConnection)
+                    self.addColumnsToTable(dbConnection=dbConnection)
+                else:
+                    l.info(msg="Database: media initialized successfully")
 
-                self.addColumnsToExistingRecords(conn=conn)
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='options'")
+                options_results = cursor.fetchone()
+                if options_results is None:
+                    self.createOptionsTable(dbConnection=dbConnection)
+                    self.addColumnsToTable(dbConnection=dbConnection)
+                else:
+                    l.info("Database: options initialized successfully")
+
         except Exception as e:
             l.error(msg="Error initializing database")
             self.error_logger.handle_error(error=e)
 
-    def createOptionsTable(self, conn: sqlite3.Connection) -> None:
+    def createOptionsTable(self, dbConnection: sqlite3.Connection) -> None:
         """Create an options table to store available categories, file tags, and types."""
         try:
-            cursor: sqlite3.Cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS options (
-                    id INTEGER PRIMARY KEY,
-                    _Category TEXT UNIQUE,
-                    _Tag TEXT UNIQUE,
-                    _Type TEXT UNIQUE
-                )
-            """)
+            cursor: sqlite3.Cursor = dbConnection.cursor()
+            cursor.execute(OPTIONS_dbSchema)
         except Exception as e:
             l.error(msg="Error creating options table")
             self.error_logger.handle_error(error=e)
 
-    def createTables(self, conn: sqlite3.Connection) -> None:
-        """Create database tables based on the schema in the CONFIG.
-        Args: conn (sqlite3.Connection): The database connection object."""
+    def createMediaTable(self, dbConnection: sqlite3.Connection) -> None:
+        """Create database tables based on the schema in the CONFIG."""
         try:
-            cursor: sqlite3.Cursor = conn.cursor()
-            for schema in CONFIG["schema"].values():
-                cursor.execute(schema)
+            cursor: sqlite3.Cursor = dbConnection.cursor()
+            l.info(msg=f"Creating media table with schema {MEDIA_dbSchema}")
+            cursor.execute(MEDIA_dbSchema)
         except Exception as e:
-            l.error(msg="Error creating tables")
+            l.error(msg="Error creating media table")
             self.error_logger.handle_error(error=e)
-
-    def addColumnsToExistingRecords(self, conn: sqlite3.Connection) -> None:
-        """Add new columns to existing records in the 'media' table.
-        Args: conn (sqlite3.Connection): The database connection object"""
-        cursor: sqlite3.Cursor = conn.cursor()
-        all_successful = True
-        for statement in ALTER_STATEMENTS:
-            column_name: str = self.getColumnName(statement=statement)
-            try:
-                cursor.execute(f"SELECT {column_name} FROM media LIMIT 1")
-            except Exception as e:
-                l.error(msg="Error In addColumnsToExistingRecords:")
-                self.error_logger.handle_error(error=e)
-                try:
-                    cursor.execute(statement)
-                except Exception as e:
-                    l.error(msg=f"Error adding column {column_name}")
-                    self.error_logger.handle_error(error=e)
-                    all_successful = False
-        if not all_successful:
-            l.error(msg="Not all columns were successfully added")
 
     def getColumnName(self, statement: str) -> str:
         """Extract the column name from an ALTER TABLE statement.
@@ -439,11 +406,61 @@ class DatabaseConnection:
             self.error_logger.handle_error(error=e)
             return ""
 
+    def addColumnsToTable(self, dbConnection: sqlite3.Connection) -> None:
+        cursor: sqlite3.Cursor = dbConnection.cursor()
+        all_successful = True
+        table = "media"
+        for statement in MEDIA_dbAlterStatements:
+            try:
+                l.info(f"Adding columns to media table {statement}")
+                media_column_name: str = self.getColumnName(statement=statement)
+            except Exception as e:
+                l.error(msg=f"Error In addColumnsToTable MEDIA_dbAlterStatement\n\nStatement was {statement}")
+                self.error_logger.handle_error(error=e)
+                sys.exit(1)
+            try:
+                cursor.execute(f"SELECT {media_column_name} FROM media LIMIT 1")
+            except Exception as e:
+                l.error(msg="Error In addColumnsToTable:")
+                self.error_logger.handle_error(error=e)
+                try:
+                    cursor.execute(statement)
+                except Exception as e:
+                    l.error(msg=f"Error adding column {media_column_name}")
+                    self.error_logger.handle_error(error=e)
+                    all_successful = False
+        if not all_successful:
+            l.error(msg="Not all columns were successfully added")
 
-class dbManager:
+        table = "options"
+        for statement in OPTIONS_dbAlter_Statements:
+            try:
+                l.info(f"Adding columns to options table {statement}")
+                options_column_name: str = self.getColumnName(statement=statement)
+            except Exception as e:
+                l.error(msg="Error In addColumnsToTable OPTIONS_dbAlter_Statements:")
+                self.error_logger.handle_error(error=e)
+                continue
+            try:
+                cursor.execute(f"SELECT {options_column_name} FROM {table} LIMIT 1")
+            except Exception as e:
+                l.error(msg="Error In addColumnsToTable:")
+                self.error_logger.handle_error(error=e)
+                try:
+                    cursor.execute(statement)
+                except Exception as e:
+                    l.error(msg=f"Error adding column {options_column_name}")
+                    self.error_logger.handle_error(error=e)
+                    all_successful = False
+        if not all_successful:
+            l.error(msg="Not all columns were successfully added")
+
+
+class DatabaseManager:
     def __init__(self, db_conn: DatabaseConnection) -> None:
         self.db_conn: DatabaseConnection = db_conn
         self.error_logger = ErrorLogger()
+
 
     def executeGETQuery(self, query: str, params: Tuple = ()) -> List[Tuple]:
         try:
@@ -463,6 +480,7 @@ class dbManager:
             return []
 
     def executePOSTQuery(self, query: str, params: Tuple = ()) -> bool:
+        # sourcery skip: extract-method
         try:
             conn: sqlite3.Connection | None = self.db_conn.getDBConnection()
             if conn is None:
@@ -509,7 +527,7 @@ class dbManager:
             """
             params = (
                 new_file_name,
-                str(new_file_location),
+                str(object=new_file_location),
                 media_file._Category,
                 media_file._Tag,
                 media_file._Type,
@@ -517,15 +535,11 @@ class dbManager:
                 media_file.FileRes,
                 media_file._Processed,
                 media_file.FileSize,
-                str(media_file.sourceFilePath)
-            )
+                str(object=media_file.sourceFilePath))
 
-            success = self.executePOSTQuery(query=query, params=params)
-            if success:
-                # l.info("Record updated successfully.")
-                pass
-            else:
-                l.error("Failed to update the record.")
+            success: bool = self.executePOSTQuery(query=query, params=params)
+            if not success:
+                l.error(msg="Failed to update the record.")
             return success
         except Exception as e:
             l.error(msg="Error updateRecord - Returning False:")
@@ -535,13 +549,12 @@ class dbManager:
     def insertInitialRecord(self, media_file) -> bool:
         # sourcery skip: extract-method
         try:
-            query = """INSERT INTO media (fileId, sourceFilePath, soureceFileName, Count)
-                       VALUES (?, ?, ?, ?)"""
+            query = """INSERT INTO media (fileId, sourceFilePath, soureceFileName, Count) VALUES (?, ?, ?, ?)"""
+
+            # query = """INSERT INTO media (fileId, sourceFilePath, soureceFileName, Count)
+            #            VALUES (?, ?, ?, ?)"""
+
             params = (media_file.fileId, str(object=media_file.sourceFilePath), media_file.soureceFileName, 0)
-            # l.info(msg=f"Initial records: soureceFileName: {media_file.soureceFileName}")
-            # p.print(f"[{sW}]FileId:[/][{sB}] {media_file.fileId}", end="\n")
-            # p.print(f"[{sW}]sourceFilePath:[/][{sB}] {media_file.sourceFilePath}", end="\n")
-            # p.print(f"[{sW}]Count:[/][{sB}] {media_file.Count}", end="\n")
             return self.executePOSTQuery(query=query, params=params)
         except Exception as e:
             l.error(msg="Error insertInitialRecord - Returning False:")
@@ -581,132 +594,100 @@ class dbManager:
                 SET destFilePath = ?, destFileName = ?
                 WHERE sourceFilePath = ?
             """
-            # Ensure the paths are properly converted to strings
-            new_file_location_str = str(new_file_location)
-            source_file_path_str = str(media_file.sourceFilePath)
+            new_file_location_str = str(object=new_file_location)
+            source_file_path_str = str(object=media_file.sourceFilePath)
             params = (new_file_location_str, new_file_name, source_file_path_str)
-            # l.info(f"Executing Update: {query} with params {params}")
 
-            result = self.executePOSTQuery(query, params)
+            result: bool = self.executePOSTQuery(query=query, params=params)
             return result
         except Exception as e:
             self.error_logger.handle_error(error=e)
             return False
 
-    def getQuery_printTable(self, query: str, get_table: str) -> None:
+    def getQuery_printTable(self, query: str, tableName: str) -> None:
         """Print the database table based on the provided query."""
-        if get_table == 'media':
-            query = f"{query}{get_table}"
+        if tableName == 'media':
+            query = f"{query}{tableName}"
             try:
-                l.info(f"Executing query: {query}")
-                get_db_data = self.executeGETQuery(query=query)
-                # Create a table with specified headers
+                l.info(msg=f"Executing query: {query}")
+                getMediaTableData = self.executeGETQuery(query=query)
+                mediaTable = Table(show_header=True, header_style="bold green")
+                mediaTable.add_column(header="ID", justify="center")
+                mediaTable.add_column(header="fileId", justify="center")
+                mediaTable.add_column(header="Count", justify="center")
+                mediaTable.add_column(header="destFileName", justify="center")
+                mediaTable.add_column(header="destFilePath", justify="center")
+                mediaTable.add_column(header="_Rating", justify="center")
+                mediaTable.add_column(header="_Category", justify="center")
+                mediaTable.add_column(header="_Type", justify="center")
+                mediaTable.add_column(header="_Tag", justify="center")
+                mediaTable.add_column(header="FileRes", justify="center")
+                mediaTable.add_column(header="_Deleted", justify="center")
+                mediaTable.add_column(header="_Skipped", justify="center")
+                mediaTable.add_column(header="_Processed", justify="center")
+                mediaTable.add_column(header="FileSize", justify="center")
+                mediaTable.add_column(header="sourceFilePath", justify="center")
+                mediaTable.add_column(header="sourceFileName", justify="center")
+            # ! BURDA BURAYA BAK
 
-                table = Table(show_header=True, header_style="bold green")
-                table.add_column(header="ID", justify="center")
-                table.add_column(header="fileId", justify="center")
-                table.add_column(header="Count", justify="center")
-                table.add_column(header="destFileName", justify="center")
-                table.add_column(header="destFilePath", justify="center")
-                table.add_column(header="_Rating", justify="center")
-                table.add_column(header="_Category", justify="center")
-                table.add_column(header="_Type", justify="center")
-                table.add_column(header="_Tag", justify="center")
-                table.add_column(header="FileRes", justify="center")
-                table.add_column(header="_Deleted", justify="center")
-                table.add_column(header="_Skipped", justify="center")
-                table.add_column(header="_Processed", justify="center")
-                table.add_column(header="FileSize", justify="center")
-                table.add_column(header="sourceFilePath", justify="center")
-                table.add_column(header="sourceFileName", justify="center")
-                for row in get_db_data:
-                    file_size = row[13]  # File size is at index 13
+                for row in getMediaTableData:
+                    row_list = list(row)  # Convert tuple to list
+
+                    # Handle file size formatting
+                    file_size = row_list[13]
                     if file_size is not None:
-                        size_mb = file_size / (1024 * 1024)  # Convert to MB
-                        size_gb = file_size / (1024 * 1024 * 1024)  # Convert to GB
-                        size_display = f"{size_mb:.2f} MB" if size_mb < 1024 else f"{size_gb:.2f} GB"
+                        size_mb = file_size / (1024 * 1024)
+                        size_gb = file_size / (1024 * 1024 * 1024)
+                        size_display: str = f"{size_mb:.2f} MB" if size_mb < 1024 else f"{size_gb:.2f} GB"
                     else:
                         size_display = "N/A"
+                    row_list[13] = size_display
 
-                    row = list(row)
-                    row[13] = size_display  # Update the file size in the row with the formatted size_display
+                    mediaTable.add_row(*[str(item) for item in row_list])  # Add the updated row to the table
 
-                    table.add_row(*[str(item) for item in row])  # Add the updated row to the table
-                p.print(table)
+                p.print(mediaTable)
             except Exception as e:
                 l.error(msg="Error getQuery_printTable media table")
-                self.error_logger.handle_error(error=e)  # Using ErrorLogger to handle exceptions
+                self.error_logger.handle_error(error=e)
 
-        elif get_table == 'options':
-            query = f"{query}{get_table}"
+
+        elif tableName == 'options':
+            query = f"{query}{tableName}"
             try:
-                l.info(f"Executing query: {query}")
+                l.info(msg=f"Executing query: {query}")
                 get_db_data = self.executeGETQuery(query=query)
-                table = Table(show_header=True, header_style="bold blue")
-                table.add_column(header="ID", justify="center")
-                table.add_column(header="_Category", justify="center")
-                table.add_column(header="_Type", justify="center")
-                table.add_column(header="_Tag", justify="center")
-                p.print(table)
+                optionsTable = Table(show_header=True, header_style="bold blue")
+                optionsTable.add_column(header="ID", justify="center")
+                optionsTable.add_column(header="_Category", justify="center")
+                optionsTable.add_column(header="_Type", justify="center")
+                optionsTable.add_column(header="_Tag", justify="center")
+                p.print(optionsTable)
             except Exception as e:
                 l.error(msg="Error getQuery_printTable options table")
                 self.error_logger.handle_error(error=e)  # Using ErrorLogger to handle exceptions
         else:
             try:
-                query = query
-                # l.info(f"Executing query: {query}")
                 get_db_data = self.executeGETQuery(query=query)
-                table = Table(show_header=True, header_style="bold green")
-                table.add_column(header="ID", justify="center")
-                table.add_column(header="fileId", justify="center")
-                table.add_column(header="Count", justify="center")
-                table.add_column(header="destFileName", justify="center")
-                table.add_column(header="destFilePath", justify="center")
-                table.add_column(header="_Rating", justify="center")
-                table.add_column(header="_Category", justify="center")
-                table.add_column(header="_Type", justify="center")
-                table.add_column(header="_Tag", justify="center")
-                table.add_column(header="FileRes", justify="center")
-                table.add_column(header="_Deleted", justify="center")
-                table.add_column(header="_Skipped", justify="center")
-                table.add_column(header="_Processed", justify="center")
-                table.add_column(header="FileSize", justify="center")
-                table.add_column(header="sourceFilePath", justify="center")
-                table.add_column(header="sourceFileName", justify="center")
-                for row in get_db_data:
-                    file_size = row[13]  # File size is at index 13
-                    if file_size is not None:
-                        size_mb = file_size / (1024 * 1024)  # Convert to MB
-                        size_gb = file_size / (1024 * 1024 * 1024)  # Convert to GB
-                        size_display = f"{size_mb:.2f} MB" if size_mb < 1024 else f"{size_gb:.2f} GB"
-                    else:
-                        size_display = "N/A"
-
-                    row = list(row)  # Convert the row tuple to a list for modification
-
-                    row[13] = size_display  # Update the file size in the row with the formatted size_display
-
-                    table.add_row(*[str(item) for item in row])  # Add the updated row to the table
-                p.print(table)
+                l.info(msg=f"Executing query: {query}")
+                l.info(msg=f"Following data found in unknown table: {get_db_data}")
             except Exception as e:
                 l.error(msg="Error getQuery_printTable media table")
                 self.error_logger.handle_error(error=e)  # Using ErrorLogger to handle exceptions
 
-
 class FileProcessor:
-    def __init__(self, db_ops, media_ranker, media_player, db_conn) -> None:
+    def __init__(self, dbMan, media_ranker, media_player, dbConn) -> None:
         """
         Initialize the class with the given parameters.
         Args:
-            db_ops (dbManager): The database operations object.
+            dbMan_ops (DatabaseManager): The database operations object.
             media_ranker (Any): The media ranker object.
             media_player (Any): The media player object.
             db_conn (DatabaseConnection): The database connection object.
         """
-        self.db_ops: dbManager = db_ops
+        self.dbMan_ops: DatabaseManager = dbMan
         self.media_ranker: Any = media_ranker
         self.media_player: Any = media_player
-        self.db_connector: DatabaseConnection = db_conn
+        self.db_connector: DatabaseConnection = dbConn
         self.error_logger = ErrorLogger()
 
     def check_ifRecordExists(self, filepath) -> bool:
@@ -715,7 +696,7 @@ class FileProcessor:
         Returns: bool: True if a record exists, False otherwise."""
         try:
             query = "SELECT COUNT(*) FROM media WHERE sourceFilePath = ?"
-            result = self.db_ops.executeGETQuery(query=query, params=(str(object=filepath),))
+            result = self.dbMan_ops.executeGETQuery(query=query, params=(str(object=filepath),))
             return result is not None and result[0][0] > 0
 
         except Exception as e:
@@ -723,17 +704,15 @@ class FileProcessor:
             self.error_logger.handle_error(error=e)
             return False
 
-    def renameAndMoveFile(self, media_file) -> Tuple[Path, str]:
+    def renameAndMoveFile(self, media_file, quality) -> Tuple[Path, str]:
         """ Renames and moves the media file to a new location based on its attributes.
         Args: media_file: The media file object.
         Returns: A tuple containing the new output path and the renamed output file name."""
-        # self.media_player.stop()
-        # self.media_player.remove(media_file=media_file)
         self.media_player.remove()
-        ZZZ()
-        output_dir: Any = CONFIG["output_folder"] / media_file._Type / media_file._Category
+        Utility.ZZZ()
+        output_dir: Any = OUTDIR / quality / media_file._Type / media_file._Category
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_file_name: str = f"{media_file._Rating}_{media_file._Tag}_{media_file.soureceFileName}"
+        output_file_name: str = f"{media_file._Tag}_{media_file._Rating}_{media_file.soureceFileName}"
         output_path: Any = output_dir / output_file_name
 
         try:
@@ -745,28 +724,24 @@ class FileProcessor:
             self.error_logger.handle_error(error=e)
             return Path(''), ''
 
-    def processSingleFile(self, file) -> bool:
-        # sourcery skip: extract-duplicate-method, extract-method
+    def processSingleFile(self, file):
         """Process the given file by playing it, updating its attributes, and interacting with the user."""
-        # l.info(msg="Processing file: " + str(object=file))
         media_file = MediaDetails(filepath=file)
         wx.CallAfter(callableObj=self.media_player.play, media_file=media_file)
 
         if not self.check_ifRecordExists(filepath=media_file.sourceFilePath):
-            self.db_ops.insertInitialRecord(media_file=media_file)
+            self.dbMan_ops.insertInitialRecord(media_file=media_file)
 
         try:
             user_choices = {
-                "_Type": lambda: self.media_ranker.getUserChoices("_Type"),
-                "_Category": lambda: self.media_ranker.getUserChoices("_Category"),
-                "_Tag": lambda: self.media_ranker.getUserChoices("_Tag"),
+                "_Type": lambda: self.media_ranker.getUserChoices(option_type="_Type", allow_new=True, mediaFile=media_file),
+                "_Category": lambda: self.media_ranker.getUserChoices(option_type="_Category", allow_new=True, mediaFile=media_file),
+                "_Tag": lambda: self.media_ranker.getUserChoices(option_type="_Tag", allow_new=True, mediaFile=media_file),
             }
             for attribute, input_func in user_choices.items():
                 user_input = input_func()
                 if isinstance(user_input, list):
                     user_input = user_input[0] if user_input else None
-                # if self.isSpecialCommand(user_input=user_input):
-                #     return self.handleSpecialCommand(user_input=user_input, media_file=media_file)
                 setattr(media_file, attribute, user_input)
 
             media_file._Rating = self.media_ranker.getRating()
@@ -777,10 +752,7 @@ class FileProcessor:
             media_file.Count = 0
 
             self.media_player.stop()
-            ZZZ()
-
-            # l.info(f"So far, media_file: Cat {media_file._Category} Type {media_file._Type}")
-            # l.info(f"Tag {media_file._Tag}  Rating {media_file._Rating}")
+            Utility.ZZZ()
 
             if not media_file.is_valid():
                 l.error(msg="Media file has missing or invalid values. Skipping database operations.")
@@ -789,14 +761,14 @@ class FileProcessor:
             quality = media_file.FileRes
             qConversion = media_file.getMediaQuality(FileRes=quality)
             l.info(f"Quality Conversion: {qConversion}")
-            newDestPath, newFileName = self.renameAndMoveFile(media_file=media_file)
+            newDestPath, newFileName = self.renameAndMoveFile(media_file=media_file, quality=qConversion)
             if newDestPath and newFileName:
-                update_successful = self.db_ops.updateMediaFilenameAndLocation(
+                update_successful = self.dbMan_ops.updateMediaFilenameAndLocation(
                     media_file=media_file, new_file_location=newDestPath, new_file_name=newFileName)
-                self.db_ops.verifyUpdate(str(media_file.sourceFilePath))
+                self.dbMan_ops.verifyUpdate(str(media_file.sourceFilePath))
                 if update_successful:
                     try:
-                        self.db_ops.updateRecord(media_file=media_file, new_file_location=newDestPath, new_file_name=newFileName)
+                        self.dbMan_ops.updateRecord(media_file=media_file, new_file_location=newDestPath, new_file_name=newFileName)
                         p.print(f"[{sW}]Moved From:[/][{sY}] {media_file.sourceFilePath}[/]", end="\n")
                         p.print(f"[{sW}]Moved To:[/][{sY}] {newDestPath}[/]", end="\n")
                         typecat: str = f"[{sW}]_Type:[/][{sY}] {media_file._Type}[/] | [{sW}]_Category:[/][{sY}] {media_file._Category}[/]"
@@ -804,9 +776,6 @@ class FileProcessor:
                         p.print(f"{typecat} | {tagrating}", end="\n")
                         if self.check_ifRecordExists(filepath=media_file.sourceFilePath):
                             # p.print("Record updated successfully.")
-                            pass
-                        else:
-                            # p.print("Failed to update the record.")
                             pass
                     except Exception as e:
                         l.error(msg="processSingleFile| Error during updateRecord - Returning False")
@@ -825,39 +794,6 @@ class FileProcessor:
             self.error_logger.handle_error(error=e)
             return False
 
-    # def isSpecialCommand(self, user_input) -> bool:
-    #     if isinstance(user_input, str) and user_input.startswith('!'):
-    #         command_without_prefix: str = user_input[1:].lower()
-    #         special_commands: set[str] = {"0", "1", "66", "!D", "!d", "X", "x", "!S", "!s", "!q", "!Q",
-    #                                       "!DELETE", "!DEL", "!del", "!skip", "!SKIP", "!Skip", "!quit", "!QUIT", "!END", "!end"}
-
-    #         return command_without_prefix in special_commands
-    #     return False
-
-    # def handleSpecialCommand(self, user_input, media_file) -> bool:
-    #     if self.isDeleteCommand(user_input=user_input):
-    #         self.db_ops.increaseViewCount(media_file=media_file)
-    #         return self.deleteMediaFile(media_file=media_file)
-    #     if self.isSkipCommand(user_input=user_input):
-    #         media_file._Skipped = True
-    #         self.db_ops.increaseViewCount(media_file=media_file)
-    #         return True
-    #     if self.isQuitCommand(user_input=user_input):
-    #         l.info(msg=f"Quit command received for {media_file.soureceFileName}")
-    #         l.info(msg=f"Current view {media_file.Count}")
-    #         self.db_ops.increaseViewCount(media_file=media_file)
-    #         l.info(msg=f"Updated view count {media_file.Count}")
-    #         self.media_player.stop()
-    #         ZZZ()
-    #         self.gracefulShutdown()
-    #         return False
-
-        # else:
-        #     l.info(msg=f"Unknown special command received for {media_file.soureceFileName}")
-        #     self.media_player.stop()
-        #     ZZZ()
-        # return False
-
     def gracefulShutdown(self) -> None:
         """Gracefully shutdown the application, make sure DB does not get corrupted."""
         l.info(msg="Gracefully shutting down the application")
@@ -868,21 +804,12 @@ class FileProcessor:
         l.info(msg="Application shutdown successfully")
         sys.exit(0)
 
-    # def isDeleteCommand(self, user_input) -> bool:
-    #     return user_input in ["0", "D", "del", "X", "DELETE", "DEL"]
-
-    # def isSkipCommand(self, user_input) -> bool:
-    #     return user_input in ["1", "s", "skip", "S", "SKIP", "Skip"]
-
-    # def isQuitCommand(self, user_input) -> bool:
-    #     return user_input.lower() in ["66", "quit", "q", "end", "QUIT", "Q", "END"]
-
     def deleteMediaFile(self, media_file) -> bool:
         """Delete the media file and mark it as deleted in the database."""
         try:
             send2trash.send2trash(paths=str(object=media_file.sourceFilePath))
             media_file._Deleted = True
-            self.db_ops.markFileAsDeleted(media_file=media_file)
+            self.dbMan_ops.markFileAsDeleted(media_file=media_file)
             return True
         except Exception as e:
             l.error(msg="Error deleting media file")
@@ -890,20 +817,18 @@ class FileProcessor:
             return False
 
 
-def processFiles(db_ops, media_ranker, media_player, files, db_conn) -> None:
+def processFiles(dbMan, media_ranker, media_player, files, dbConn) -> None:
     try:
         l.info(msg=f"Processing {len(files)} files")
-        processor = FileProcessor(db_ops=db_ops, media_ranker=media_ranker, media_player=media_player, db_conn=db_conn)
+        processor = FileProcessor(dbMan=dbMan, media_ranker=media_ranker, media_player=media_player, dbConn=dbConn)
         while files:
             file = files.pop(0)
             success: bool = processor.processSingleFile(file=file)
-            # l.info(msg=f"File processing result: {success}")
-            # l.info(f"File is {file}")
             if not success:
                 l.info(msg=f"Failed to process file: {file}")
             try:
                 tableName = 'media'
-                db_ops.getQuery_printTable(query=f"SELECT * FROM '{tableName}' WHERE sourceFilePath = '{file}'", get_table={tableName})
+                dbMan.getQuery_printTable(query=f"SELECT * FROM '{tableName}' WHERE sourceFilePath = '{file}'", tableName={tableName})
 
             except Exception as e:
                 l.error(msg=f"Error printing table in processFiles: {e}")
@@ -912,38 +837,52 @@ def processFiles(db_ops, media_ranker, media_player, files, db_conn) -> None:
         l.error(msg=f"Error processFiles: {e}")
 
 
-def startPlayer(db_operations, media_ranker, db_connection) -> None:
-    input_folder: Path = CONFIG["input_folder"]
-    all_files: list[Path] = [f for f in input_folder.glob(pattern="*") if f.suffix in CONFIG["valid_extensions"] and f.is_file()]
-    l.info(msg=f"Found {len(all_files)} files in {input_folder}.")
+def startPlayer(dbMan, media_ranker, dbConn) -> None:
+    l.info(msg=f"Starting player in {INDIR}")
+    all_files: list[Any] = []
+    for extension in VALID_EXTENSIONS:
+        all_files.extend(INDIR.glob(pattern=f"*{extension}"))
+
+    l.info(msg=f"Found {len(all_files)} files in {INDIR}.")
 
     if len(all_files) > 0:
         media_player = mediaPlayer()
         random.shuffle(x=all_files)
         app: Any = wx.App(False)
         file_processing_thread = threading.Thread(target=processFiles, args=(
-            db_operations, media_ranker, media_player, all_files, db_connection))
+            dbMan, media_ranker, media_player, all_files, dbConn))
         file_processing_thread.start()
         app.MainLoop()
     else:
         l.info(msg="No files to process.")
 
 
+
+
+
 def main() -> None:
+    errors_file = Path("1.txt")
+    if errors_file.exists():
+        errors_file.unlink()
     try:
-        db_connection = DatabaseConnection(db_file=CONFIG["database_file"])
-        db_operations = dbManager(db_conn=db_connection)
-        db_connection.initializeDB()
-        db_operations.getQuery_printTable(query="SELECT * FROM ", get_table="media")
+        Utility.checkDB(databaseFile=MEDIA_dbFile)
+        Utility.checkDB(databaseFile=OPTIONS_dbFile)
+        dbConnector = DatabaseConnection(db_file=MEDIA_dbFile)
+
+        dbConnector.initializeDB()
+
+        dbManager = DatabaseManager(db_conn=dbConnector)
+
+        dbManager.getQuery_printTable(query="SELECT * FROM ", tableName="media")
         print('\n\n')
-        db_operations.getQuery_printTable(query="SELECT * FROM ", get_table="options")
-        media_ranker = mediaRanker(db_ops=db_operations)
+        dbManager.getQuery_printTable(query="SELECT * FROM ", tableName="options")
+        media_ranker = mediaRanker(dbMan=dbManager)
     except Exception as e:
         p.print(f"Error initializing database and operations: {e}", style="bold red")
         p.print_exception()
         sys.exit(1)
     try:
-        startPlayer(db_operations=db_operations, media_ranker=media_ranker, db_connection=db_connection)
+        startPlayer(dbMan=dbManager, media_ranker=media_ranker, dbConn=dbConnector)
     except Exception as e:
         p.print(f"Application terminated due to an unexpected error: {e}", style="bold red")
         p.print_exception()

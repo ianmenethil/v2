@@ -5,6 +5,7 @@ import yaml
 from typing import Any, Dict, List, Literal
 from rich.console import Console
 from rich.table import Table
+console = Console()
 
 
 class DBConnection:
@@ -27,7 +28,7 @@ def add_column(db_file: str, table_name: str, column_name: str, column_type: str
             conn.commit()
         except sqlite3.OperationalError as e:
             if "duplicate column name" in str(e):
-                print(f"Column '{column_name}' already exists in table '{table_name}'.")
+                console.print(f"Column '{column_name}' already exists in table '{table_name}'.")
             else:
                 raise e
 
@@ -59,7 +60,6 @@ def execute_custom_query(db_file: str, query: str) -> None:
             formatted_row = [str(cell) if cell is not None else "N/A" for cell in row]
             table.add_row(*formatted_row)
 
-        console = Console()
         console.print(table)
 
 
@@ -99,13 +99,14 @@ def fetch_and_display_records(db_file, table_name) -> list[Any]:
         cursor.execute(f"SELECT * FROM {table_name}")
         records = cursor.fetchall()
         # Assuming the first column is the ID
-        print("\nRecords in the table:")
+        console.print("\nRecords in the table:")
         for record in records:
-            print(f"- ID: {record[0]}, Data: {record[1:]}")
+            console.print(f"- ID: {record[0]}, Data: {record[1:]}")
         return records
 
 
 def print_db_records(db_file, table_name) -> None:
+    console.print(f"Printint table: {table_name} in database: {db_file}")
     with DBConnection(db_file) as conn:
         cursor = conn.cursor()
         cursor.execute(f"SELECT * FROM {table_name}")
@@ -122,7 +123,6 @@ def print_db_records(db_file, table_name) -> None:
             formatted_row = [str(cell) if cell is not None else "N/A" for cell in row]
             table.add_row(*formatted_row)
 
-        console = Console()
         console.print(table)
 
 
@@ -189,7 +189,7 @@ def get_db_file_path() -> Any | str | None:
 def get_table_name(db_file: str) -> Any | None:
     available_tables = get_available_tables(db_file)
     if not available_tables:
-        print("No tables found in the database.")
+        console.print("No tables found in the database.")
         return None
 
     questions = [
@@ -231,9 +231,9 @@ def list_table_columns(db_file, table_name) -> None:
         cursor = conn.cursor()
         cursor.execute(f'PRAGMA table_info({table_name})')
         columns = cursor.fetchall()
-        print("Columns in the table:")
+        console.print("Columns in the table:")
         for col in columns:
-            print(f"- {col[1]} (Type: {col[2]})")
+            console.print(f"- {col[1]} (Type: {col[2]})")
 
 
 def list_column_types(db_file: str, table_name: str) -> Dict[str, str]:
@@ -252,19 +252,19 @@ def execute_safe_query(db_file, query, params=()) -> bool:
             conn.commit()
             return True
     except sqlite3.Error as e:
-        print(f"An error occurred: {e}")
+        console.print(f"An error occurred: {e}")
         return False
 
 
 def handle_error(e: Exception) -> None:
     if isinstance(e, sqlite3.IntegrityError):
-        print("Error: Duplicate data or integrity constraint violation.")
+        console.print("Error: Duplicate data or integrity constraint violation.")
     else:
-        print(f"An error occurred: {e}")
+        console.print(f"An error occurred: {e}")
 
 
 def main() -> None:
-    db_file = "config/db.db"  # Hardcoded database file path
+    db_file = r"F:\dler\v2\config\media.db"  # Hardcoded database file path
 
     while True:
         action = main_menu()
@@ -273,12 +273,12 @@ def main() -> None:
 
         # db_file = get_db_file_path()
         # if not db_file:
-        #     print("No database file selected. Exiting.")
+        #     console.print("No database file selected. Exiting.")
         #     break
-
+        console.print(f"Getting table name from database file: {db_file}")
         table_name = get_table_name(db_file)
         if not table_name:
-            print("No table name provided or invalid table name. Exiting.")
+            console.print("No table name provided or invalid table name. Exiting.")
             break
 
         if action in ['Add Column', 'Insert Record', 'Update Record', 'Delete Record', 'Bulk Insert From YAML', 'Print Records']:
@@ -301,7 +301,7 @@ def main() -> None:
                     data_dict = eval(f"dict({data['data']})")
                     insert_record(db_file, table_name, data_dict)
                 except SyntaxError:
-                    print("Invalid data format. Please use the correct dictionary format.")
+                    console.print("Invalid data format. Please use the correct dictionary format.")
 
         # elif action == 'Update Record':
         #     update_data = inquirer.prompt([
@@ -313,11 +313,11 @@ def main() -> None:
         #             data_dict = eval(f"dict({update_data['data']})")
         #             update_record(db_file, table_name, data_dict, update_data['condition'])
         #         except SyntaxError:
-        #             print("Invalid data format. Please use the correct dictionary format.")
+        #             console.print("Invalid data format. Please use the correct dictionary format.")
         elif action == 'Update Record':
             records = fetch_and_display_records(db_file, table_name)
             if not records:
-                print("No records found to update.")
+                console.print("No records found to update.")
                 continue
 
             record_id = inquirer.prompt([
@@ -329,7 +329,7 @@ def main() -> None:
                 cursor = conn.cursor()
                 cursor.execute(f"SELECT * FROM {table_name} WHERE id = ?", (record_id,))
                 selected_record = cursor.fetchone()
-                print(f"Current data for record ID {record_id}: {selected_record}")
+                console.print(f"Current data for record ID {record_id}: {selected_record}")
 
             update_data = inquirer.prompt([
                 inquirer.Text('data', message='Enter new data as a dictionary (key:value, key:value):')
@@ -340,7 +340,7 @@ def main() -> None:
                     data_dict = eval(f"dict({update_data['data']})")
                     update_record(db_file, table_name, data_dict, f"id = {record_id}")
                 except SyntaxError:
-                    print("Invalid data format. Please use the correct dictionary format.")
+                    console.print("Invalid data format. Please use the correct dictionary format.")
 
         elif action == 'Execute Custom Query':
             query = inquirer.prompt([

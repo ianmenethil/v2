@@ -36,6 +36,8 @@ logging.basicConfig(
 
 l = logging.getLogger(name="rich")  # noqa: E741
 install()
+p = Console(soft_wrap=True, style=sWB, tab_size=4, record=True, markup=True, emoji=True,
+            emoji_variant="emoji", highlight=True, log_time=True, log_path=True, log_time_format="[%X]")
 
 ### FOLLOWING IS THE CONSOLE CLASS FROM RICH LIBRARY ###
 # class Console(
@@ -102,8 +104,6 @@ install()
 #     get_datetime (Callable[[], datetime], optional): Callable that gets the current time as a datetime.datetime object (used by Console.log),
 #         or None for datetime.now.
 #     get_time (Callable[[], time], optional): Callable that gets the current time in seconds, default uses time.monotonic.
-p = Console(soft_wrap=True, style=sWB, tab_size=4, record=True, markup=True, emoji=True,
-            emoji_variant="emoji", highlight=True, log_time=True, log_path=True, log_time_format="[%X]")
 
 # # Demo how to use each style.
 # p.print(f"[{sR}]Red text[/]")

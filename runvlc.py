@@ -35,7 +35,7 @@ class VLCMediaPlayerGUI(wx.Frame):
     def setup_ui_components(self) -> None:
         """ Set up the UI components for the VLC player. This method initializes and configures the various UI components such as panels, sliders, buttons, and timers."""
         self.pnlVideo: Any = wx.Panel(self)
-        self.sldPosition: Any = wx.Slider(self, value=0, minValue=0, maxValue=1000)
+        self.sldPosition: Any = wx.Slider(self, value=0, minValue=0, maxValue=100)
         self.btnPlay: Any = wx.Button(self, label="Play")
         self.btnStop: Any = wx.Button(self, label="Stop")
         self.btnMute: Any = wx.Button(self, label="Mute")
@@ -165,7 +165,7 @@ class VLCMediaPlayerGUI(wx.Frame):
             return "Low Quality"
 
     def on_seek(self, event) -> None:
-        new_time: int = int(self.sldPosition.GetValue() * self.player.get_length() / 1000)
+        new_time: int = int(self.sldPosition.GetValue() * self.player.get_length() / 100)
         self.player.set_time(new_time)
 
     def on_open(self, event) -> None:
@@ -209,7 +209,7 @@ class VLCMediaPlayerGUI(wx.Frame):
         if self.player.is_playing():
             length: Any = self.player.get_length()
             time: Any = self.player.get_time()
-            self.sldPosition.SetValue(int(time * 1000 / length))
+            self.sldPosition.SetValue(int(time * 100 / length))
         else:
             self.on_play(event=None)  # Loop the video
 
